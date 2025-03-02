@@ -15,8 +15,11 @@ import {
   IconButton,
   useTheme as usePaperTheme,
   Card,
-  Surface,
-  Menu,
+  Title,
+  Paragraph,
+  Dialog,
+  Portal,
+  Button,
 } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -25,8 +28,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import useAlarmStore from '../../stores/useAlarmStore';
 import { Alarm, AlarmFilter, AlarmSortOption } from '../../models/Alarm';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { format } from 'date-fns';
+import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { format, addDays } from 'date-fns';
 
 type AlarmScreenNavigationProp = StackNavigationProp<AlarmStackParamList, 'AlarmList'>;
 
@@ -40,6 +43,7 @@ const AlarmScreen: React.FC = () => {
     alarms,
     alarmSounds,
     isLoading,
+    error,
     filter,
     sortOption,
     fetchAlarms,
@@ -48,15 +52,13 @@ const AlarmScreen: React.FC = () => {
     deleteAlarm,
     setFilter,
     setSortOption,
-    resetFilter,
   } = useAlarmStore();
   
   const [refreshing, setRefreshing] = useState(false);
-  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
-  const [sortMenuVisible, setSortMenuVisible] = useState(false);
-  const [contextMenuVisible, setContextMenuVisible] = useState<string | null>(null);
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [selectedAlarm, setSelectedAlarm] = useState<Alarm | null>(null);
   
-  // Fetch alarms when the screen is focused
+  // Fetch alarms and sounds when the screen is focused
   useFocusEffect(
     useCallback(() => {
       if (user) {
@@ -78,14 +80,14 @@ const AlarmScreen: React.FC = () => {
     }
   }, [user, fetchAlarms, fetchAlarmSounds]);
   
-  // Filter alarms based on current filters
+  // Filter and sort alarms
   const filteredAlarms = alarms.filter(alarm => {
-    // Skip if alarm enabled state doesn't match the filter
+    // Skip if alarm doesn't match the enabled filter
     if (filter.enabled !== undefined && alarm.enabled !== filter.enabled) {
       return false;
     }
     
-    // Skip if alarm type doesn't match the filter
+    // Skip if alarm doesn't match the one-time filter
     if (filter.isOneTime !== undefined && alarm.isOneTime !== filter.isOneTime) {
       return false;
     }
@@ -93,22 +95,15 @@ const AlarmScreen: React.FC = () => {
     return true;
   });
   
-  // Sort filtered alarms
   const sortedAlarms = [...filteredAlarms].sort((a, b) => {
     switch (sortOption) {
       case 'time-asc':
-        // Sort by hour, then minute
-        if (a.hour !== b.hour) {
-          return a.hour - b.hour;
-        }
-        return a.minute - b.minute;
+        // Sort by hour, then by minute
+        return a.hour * 60 + a.minute - (b.hour * 60 + b.minute);
         
       case 'time-desc':
-        // Sort by hour, then minute (descending)
-        if (a.hour !== b.hour) {
-          return b.hour - a.hour;
-        }
-        return b.minute - a.minute;
+        // Sort by hour, then by minute (descending)
+        return b.hour * 60 + b.minute - (a.hour * 60 + a.minute);
         
       case 'name-asc':
         return a.name.localeCompare(b.name);
@@ -127,26 +122,36 @@ const AlarmScreen: React.FC = () => {
     }
   });
   
-  // Get alarm sound name by sound name
-  const getAlarmSoundByName = (soundName: string) => {
-    return alarmSounds.find(sound => sound.name === soundName);
+  // Group alarms by type (one-time vs. recurring)
+  const oneTimeAlarms = sortedAlarms.filter(alarm => alarm.isOneTime);
+  const recurringAlarms = sortedAlarms.filter(alarm => !alarm.isOneTime);
+  
+  // Get alarm sound name
+  const getAlarmSoundName = (soundName: string): string => {
+    const sound = alarmSounds.find(s => s.name === soundName);
+    return sound ? sound.name : soundName;
   };
   
-  // Format alarm time (12-hour format with AM/PM)
-  const formatAlarmTime = (hour: number, minute: number): string => {
+  // Format time (24h or 12h)
+  const formatTime = (hour: number, minute: number): string => {
     const period = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12; // Convert 0 to 12 for 12 AM
-    const displayMinute = minute.toString().padStart(2, '0');
-    
-    return `${displayHour}:${displayMinute} ${period}`;
+    const hour12 = hour % 12 || 12;
+    return `${hour12}:${minute.toString().padStart(2, '0')} ${period}`;
   };
   
-  // Format alarm days
-  const formatAlarmDays = (days: Array<0 | 1 | 2 | 3 | 4 | 5 | 6>): string => {
-    if (days.length === 0) return '';
-    if (days.length === 7) return 'Every day';
+  // Format days
+  const formatDays = (days: number[]): string => {
+    if (days.length === 0) {
+      return 'Never';
+    }
     
-    if (days.length === 5 && !days.includes(0) && !days.includes(6)) {
+    if (days.length === 7) {
+      return 'Every day';
+    }
+    
+    if (days.length === 5 && 
+        days.includes(1) && days.includes(2) && days.includes(3) && 
+        days.includes(4) && days.includes(5)) {
       return 'Weekdays';
     }
     
@@ -158,313 +163,174 @@ const AlarmScreen: React.FC = () => {
     return days.map(day => dayNames[day]).join(', ');
   };
   
-  // Format one-time alarm date
-  const formatOneTimeDate = (dateString?: string): string => {
-    if (!dateString) return '';
+  // Format date for one-time alarms
+  const formatDate = (dateStr?: string): string => {
+    if (!dateStr) return 'One time';
     
-    const date = new Date(dateString);
-    return format(date, 'EEE, MMM d, yyyy');
+    const date = new Date(dateStr);
+    const today = new Date();
+    const tomorrow = addDays(today, 1);
+    
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+      return 'Tomorrow';
+    } else {
+      return format(date, 'EEE, MMM d, yyyy');
+    }
   };
   
-  // Handle delete alarm
-  const handleDeleteAlarm = (alarmId: string) => {
-    Alert.alert(
-      'Delete Alarm',
-      'Are you sure you want to delete this alarm?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteAlarm(alarmId),
-        },
-      ]
-    );
+  // Handle alarm toggle
+  const handleAlarmToggle = async (alarm: Alarm) => {
+    try {
+      await toggleAlarmEnabled(alarm.id);
+    } catch (error) {
+      console.error('Failed to toggle alarm:', error);
+      Alert.alert('Error', 'Failed to toggle alarm');
+    }
+  };
+  
+  // Handle alarm delete
+  const handleDeleteAlarm = () => {
+    if (selectedAlarm) {
+      deleteAlarm(selectedAlarm.id)
+        .then(() => {
+          setDeleteDialogVisible(false);
+          setSelectedAlarm(null);
+        })
+        .catch(error => {
+          console.error('Failed to delete alarm:', error);
+          Alert.alert('Error', 'Failed to delete alarm');
+        });
+    }
   };
   
   // Render alarm item
   const renderAlarmItem = ({ item }: { item: Alarm }) => {
-    const alarmSound = getAlarmSoundByName(item.soundName);
-    
     return (
-      <Surface
+      <Card
         style={[
           styles.alarmCard,
           { backgroundColor: theme.colors.card }
         ]}
       >
-        <View style={styles.alarmHeader}>
-          <TouchableOpacity
-            style={styles.alarmTimeContainer}
-            onPress={() => navigation.navigate('AlarmDetail', { alarmId: item.id })}
-          >
-            <Text style={[styles.alarmTime, { color: theme.colors.text }]}>
-              {formatAlarmTime(item.hour, item.minute)}
-            </Text>
+        <Card.Content style={styles.alarmContent}>
+          <View style={styles.alarmHeader}>
+            <View style={styles.alarmTimeContainer}>
+              <Text style={[styles.alarmTime, { color: theme.colors.text }]}>
+                {formatTime(item.hour, item.minute)}
+              </Text>
+              {item.isOneTime ? (
+                <Text style={[styles.alarmDate, { color: theme.colors.text + '99' }]}>
+                  {formatDate(item.date)}
+                </Text>
+              ) : (
+                <Text style={[styles.alarmDays, { color: theme.colors.text + '99' }]}>
+                  {formatDays(item.days)}
+                </Text>
+              )}
+            </View>
             
+            <Switch
+              value={item.enabled}
+              onValueChange={() => handleAlarmToggle(item)}
+              trackColor={{ false: '#767577', true: theme.colors.primary + '80' }}
+              thumbColor={item.enabled ? theme.colors.primary : '#f4f3f4'}
+            />
+          </View>
+          
+          <View style={styles.alarmNameContainer}>
             <Text style={[styles.alarmName, { color: theme.colors.text }]}>
               {item.name}
             </Text>
-          </TouchableOpacity>
+          </View>
           
-          <View style={styles.alarmControls}>
-            <Switch
-              value={item.enabled}
-              onValueChange={() => toggleAlarmEnabled(item.id)}
-              trackColor={{ false: theme.colors.text + '40', true: theme.colors.primary + '80' }}
-              thumbColor={item.enabled ? theme.colors.primary : theme.colors.text + '80'}
-            />
-            
+          <View style={styles.alarmDetails}>
+            {item.notes && (
+              <Text style={[styles.alarmNotes, { color: theme.colors.text + '99' }]} numberOfLines={1}>
+                📝 {item.notes}
+              </Text>
+            )}
+            <Text style={[styles.alarmSound, { color: theme.colors.text + '99' }]}>
+              🔊 {getAlarmSoundName(item.soundName)}
+            </Text>
+          </View>
+          
+          <View style={styles.alarmActions}>
             <IconButton
-              icon="dots-vertical"
-              size={24}
-              onPress={() => setContextMenuVisible(item.id)}
-              color={theme.colors.text}
+              icon="pencil"
+              size={20}
+              color={theme.colors.primary}
+              onPress={() => navigation.navigate('AlarmDetail', { alarmId: item.id })}
             />
-            
-            <Menu
-              visible={contextMenuVisible === item.id}
-              onDismiss={() => setContextMenuVisible(null)}
-              anchor={<View />}
-              style={{ marginTop: -40, marginLeft: -20 }}
-            >
-              <Menu.Item
-                onPress={() => {
-                  setContextMenuVisible(null);
-                  navigation.navigate('AlarmDetail', { alarmId: item.id });
-                }}
-                title="Edit"
-                icon="pencil"
-              />
-              <Menu.Item
-                onPress={() => {
-                  setContextMenuVisible(null);
-                  handleDeleteAlarm(item.id);
-                }}
-                title="Delete"
-                icon="delete"
-              />
-            </Menu>
+            <IconButton
+              icon="delete"
+              size={20}
+              color={theme.colors.error || '#F44336'}
+              onPress={() => {
+                setSelectedAlarm(item);
+                setDeleteDialogVisible(true);
+              }}
+            />
           </View>
-        </View>
-        
-        <View style={styles.alarmDetails}>
-          {item.isOneTime ? (
-            <Text style={[styles.alarmSchedule, { color: theme.colors.text }]}>
-              {formatOneTimeDate(item.date)}
-            </Text>
-          ) : (
-            <Text style={[styles.alarmSchedule, { color: theme.colors.text }]}>
-              {formatAlarmDays(item.days)}
-            </Text>
-          )}
-          
-          <View style={styles.alarmFeatures}>
-            {alarmSound && (
-              <Chip
-                icon="volume-high"
-                label={alarmSound.name}
-                backgroundColor={theme.colors.primary + '20'}
-                textColor={theme.colors.text}
-              />
-            )}
-            
-            {item.vibrate && (
-              <Chip
-                icon="vibrate"
-                label="Vibrate"
-                backgroundColor={theme.colors.primary + '20'}
-                textColor={theme.colors.text}
-              />
-            )}
-            
-            {item.gradualVolume && (
-              <Chip
-                icon="volume-gradient-up"
-                label="Gradual"
-                backgroundColor={theme.colors.primary + '20'}
-                textColor={theme.colors.text}
-              />
-            )}
-            
-            {item.snoozeMinutes > 0 && (
-              <Chip
-                icon="snooze"
-                label={`${item.snoozeMinutes} min snooze`}
-                backgroundColor={theme.colors.primary + '20'}
-                textColor={theme.colors.text}
-              />
-            )}
-          </View>
-        </View>
-      </Surface>
+        </Card.Content>
+      </Card>
     );
   };
   
-  // Custom Chip component
-  const Chip = ({ 
-    icon, 
-    label, 
-    backgroundColor, 
-    textColor 
-  }: { 
-    icon: string; 
-    label: string; 
-    backgroundColor: string; 
-    textColor: string;
-  }) => {
-    return (
-      <View style={[styles.chip, { backgroundColor }]}>
-        <MaterialCommunityIcons name={icon} size={14} color={textColor} style={styles.chipIcon} />
-        <Text style={[styles.chipText, { color: textColor }]}>{label}</Text>
-      </View>
-    );
-  };
-  
-  // Render empty list message
-  const renderEmptyList = () => (
-    <View style={styles.emptyContainer}>
-      <MaterialCommunityIcons
-        name="alarm-multiple"
-        size={64}
-        color={theme.colors.primary}
-        style={styles.emptyIcon}
-      />
-      <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
-        No Alarms
+  // Render section header
+  const renderSectionHeader = (title: string) => (
+    <View
+      style={[
+        styles.sectionHeader,
+        { backgroundColor: theme.colors.background }
+      ]}
+    >
+      <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>
+        {title}
       </Text>
-      <Text style={[styles.emptyMessage, { color: theme.colors.text }]}>
-        Tap the + button to create your first alarm
-      </Text>
+      <Divider style={styles.divider} />
     </View>
   );
   
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: theme.colors.primary }]}>
-          Alarms
-        </Text>
-        
-        <View style={styles.headerActions}>
-          <IconButton
-            icon="filter-variant"
-            size={24}
-            onPress={() => setFilterMenuVisible(true)}
-            color={Object.keys(filter).length > 0 ? theme.colors.primary : theme.colors.text}
-          />
-          
-          <Menu
-            visible={filterMenuVisible}
-            onDismiss={() => setFilterMenuVisible(false)}
-            anchor={<View />}
-            style={{ marginTop: 50 }}
-          >
-            <Menu.Item
-              onPress={() => {
-                setFilter({ ...filter, enabled: true });
-                setFilterMenuVisible(false);
-              }}
-              title="Enabled Alarms"
-              icon="bell"
-            />
-            <Menu.Item
-              onPress={() => {
-                setFilter({ ...filter, enabled: false });
-                setFilterMenuVisible(false);
-              }}
-              title="Disabled Alarms"
-              icon="bell-off"
-            />
-            <Menu.Item
-              onPress={() => {
-                setFilter({ ...filter, isOneTime: true });
-                setFilterMenuVisible(false);
-              }}
-              title="One-time Alarms"
-              icon="calendar-clock"
-            />
-            <Menu.Item
-              onPress={() => {
-                setFilter({ ...filter, isOneTime: false });
-                setFilterMenuVisible(false);
-              }}
-              title="Repeating Alarms"
-              icon="repeat"
-            />
-            <Divider />
-            <Menu.Item
-              onPress={() => {
-                resetFilter();
-                setFilterMenuVisible(false);
-              }}
-              title="Clear Filters"
-              icon="filter-remove"
-            />
-          </Menu>
-          
-          <IconButton
-            icon="sort"
-            size={24}
-            onPress={() => setSortMenuVisible(true)}
-            color={theme.colors.text}
-          />
-          
-          <Menu
-            visible={sortMenuVisible}
-            onDismiss={() => setSortMenuVisible(false)}
-            anchor={<View />}
-            style={{ marginTop: 50 }}
-          >
-            <Menu.Item
-              onPress={() => {
-                setSortOption('time-asc');
-                setSortMenuVisible(false);
-              }}
-              title="Time (Ascending)"
-              icon="clock-outline"
-            />
-            <Menu.Item
-              onPress={() => {
-                setSortOption('time-desc');
-                setSortMenuVisible(false);
-              }}
-              title="Time (Descending)"
-              icon="clock-outline"
-            />
-            <Menu.Item
-              onPress={() => {
-                setSortOption('name-asc');
-                setSortMenuVisible(false);
-              }}
-              title="Name (A-Z)"
-              icon="sort-alphabetical-ascending"
-            />
-            <Menu.Item
-              onPress={() => {
-                setSortOption('name-desc');
-                setSortMenuVisible(false);
-              }}
-              title="Name (Z-A)"
-              icon="sort-alphabetical-descending"
-            />
-          </Menu>
-        </View>
-      </View>
-      
       <FlatList
-        data={sortedAlarms}
-        keyExtractor={item => item.id}
-        renderItem={renderAlarmItem}
-        contentContainerStyle={[
-          styles.alarmsList,
-          sortedAlarms.length === 0 && styles.emptyList
+        data={[
+          ...(recurringAlarms.length > 0 ? [{ type: 'header', title: 'Recurring Alarms' }] : []),
+          ...recurringAlarms.map(alarm => ({ type: 'alarm', data: alarm })),
+          ...(recurringAlarms.length > 0 && oneTimeAlarms.length > 0 ? [{ type: 'divider' }] : []),
+          ...(oneTimeAlarms.length > 0 ? [{ type: 'header', title: 'One-Time Alarms' }] : []),
+          ...oneTimeAlarms.map(alarm => ({ type: 'alarm', data: alarm })),
         ]}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-        ListEmptyComponent={renderEmptyList}
+        keyExtractor={(item, index) => `${item.type}-${index}`}
+        renderItem={({ item }) => {
+          if (item.type === 'header') {
+            return renderSectionHeader(item.title);
+          } else if (item.type === 'divider') {
+            return <View style={styles.sectionDivider} />;
+          } else {
+            return renderAlarmItem({ item: item.data });
+          }
+        }}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons
+              name="alarm-off"
+              size={64}
+              color={theme.colors.text + '40'}
+            />
+            <Text style={[styles.emptyText, { color: theme.colors.text + '80' }]}>
+              No alarms set
+            </Text>
+            <Text style={[styles.emptySubtext, { color: theme.colors.text + '60' }]}>
+              Tap the + button to add an alarm
+            </Text>
+          </View>
+        }
+        contentContainerStyle={
+          sortedAlarms.length === 0 ? styles.emptyListContent : styles.listContent
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -481,6 +347,29 @@ const AlarmScreen: React.FC = () => {
         onPress={() => navigation.navigate('CreateAlarm')}
         color={paperTheme.colors.surface}
       />
+      
+      <Portal>
+        <Dialog
+          visible={deleteDialogVisible}
+          onDismiss={() => setDeleteDialogVisible(false)}
+          style={{ backgroundColor: theme.colors.card }}
+        >
+          <Dialog.Title style={{ color: theme.colors.text }}>
+            Delete Alarm
+          </Dialog.Title>
+          <Dialog.Content>
+            <Paragraph style={{ color: theme.colors.text }}>
+              Are you sure you want to delete this alarm?
+            </Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDeleteDialogVisible(false)}>Cancel</Button>
+            <Button onPress={handleDeleteAlarm} color={theme.colors.error || '#F44336'}>
+              Delete
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 };
@@ -489,38 +378,33 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  alarmsList: {
+  listContent: {
     padding: 16,
   },
-  emptyList: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  emptyListContent: {
+    flex: 1,
+    padding: 16,
   },
-  separator: {
+  sectionHeader: {
+    paddingVertical: 8,
+    width: '100%',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  divider: {
+    marginTop: 8,
+  },
+  sectionDivider: {
     height: 16,
   },
   alarmCard: {
-    borderRadius: 12,
+    marginBottom: 16,
     elevation: 2,
-    padding: 16,
+  },
+  alarmContent: {
+    padding: 8,
   },
   alarmHeader: {
     flexDirection: 'row',
@@ -529,64 +413,55 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   alarmTimeContainer: {
-    flex: 1,
+    flexDirection: 'column',
   },
   alarmTime: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 32,
+    fontWeight: '500',
+  },
+  alarmDate: {
+    fontSize: 14,
+  },
+  alarmDays: {
+    fontSize: 14,
+  },
+  alarmNameContainer: {
+    marginBottom: 8,
   },
   alarmName: {
-    fontSize: 16,
-    opacity: 0.8,
-  },
-  alarmControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    fontSize: 18,
+    fontWeight: '500',
   },
   alarmDetails: {
+    marginBottom: 8,
+  },
+  alarmNotes: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  alarmSound: {
+    fontSize: 14,
+  },
+  alarmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
     marginTop: 8,
   },
-  alarmSchedule: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 8,
-  },
-  alarmFeatures: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 6,
-  },
-  chipIcon: {
-    marginRight: 4,
-  },
-  chipText: {
-    fontSize: 12,
-  },
   emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 32,
   },
-  emptyIcon: {
-    marginBottom: 16,
-    opacity: 0.6,
-  },
-  emptyTitle: {
+  emptyText: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '500',
+    marginTop: 16,
     marginBottom: 8,
   },
-  emptyMessage: {
+  emptySubtext: {
     fontSize: 16,
     textAlign: 'center',
-    opacity: 0.7,
-    paddingHorizontal: 32,
   },
   fab: {
     position: 'absolute',
