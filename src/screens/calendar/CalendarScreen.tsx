@@ -5,7 +5,8 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  ScrollView,
+  Alert,
+  Platform,
 } from 'react-native';
 import {
   Text,
@@ -14,9 +15,11 @@ import {
   Menu,
   IconButton,
   useTheme as usePaperTheme,
-  Card,
   Chip,
-  ActivityIndicator,
+  List,
+  Avatar,
+  Appbar,
+  Button,
 } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -24,29 +27,25 @@ import { CalendarStackParamList } from '../../navigation/feature/CalendarNavigat
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import useCalendarStore from '../../stores/useCalendarStore';
-import { CalendarEvent, CustomCalendar } from '../../models/Calendar';
-import {
-  format,
-  isToday,
-  isSameDay,
-  eachDayOfInterval,
-  startOfWeek,
-  endOfWeek,
-  startOfMonth,
-  endOfMonth,
-  getYear,
-  getMonth,
-  addDays,
-  addMonths,
-  subMonths,
-  isWithinInterval,
-  parseISO,
-} from 'date-fns';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { CalendarEvent, CustomCalendar, DeviceCalendar, EventFilter } from '../../models/Calendar';
+import { format, parseISO, isToday, isSameDay, addDays, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth } from 'date-fns';
+import * as Calendar from 'expo-calendar';
 
 type CalendarScreenNavigationProp = StackNavigationProp<CalendarStackParamList, 'CalendarMain'>;
 
-type CalendarViewMode = 'day' | 'week' | 'month';
+// Calendar display modes
+type CalendarViewMode = 'month' | 'week' | 'day';
+
+// Event background colors based on color property or calendar colors
+const getEventBackgroundColor = (event: CalendarEvent, calendars: CustomCalendar[]) => {
+  if (event.color) {
+    return event.color;
+  } else if (event.calendarId) {
+    const calendar = calendars.find(cal => cal.id === event.calendarId);
+    return calendar?.color || '#4285F4';
+  }
+  return '#4285F4';
+};
 
 const CalendarScreen: React.FC = () => {
   const navigation = useNavigation<CalendarScreenNavigationProp>();
@@ -61,553 +60,553 @@ const CalendarScreen: React.FC = () => {
     isLoading,
     error,
     selectedDate,
+    setSelectedDate,
     fetchEvents,
     fetchCustomCalendars,
     fetchDeviceCalendars,
-    setSelectedDate,
+    toggleDeviceCalendarVisibility,
   } = useCalendarStore();
   
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
-  const [viewDate, setViewDate] = useState(new Date());
-  const [viewMenuVisible, setViewMenuVisible] = useState(false);
   const [calendarMenuVisible, setCalendarMenuVisible] = useState(false);
+  const [viewModeMenuVisible, setViewModeMenuVisible] = useState(false);
+  
+  // Dates for current view
+  const selectedDateObj = parseISO(selectedDate);
+  const [currentMonth, setCurrentMonth] = useState(format(selectedDateObj, 'yyyy-MM'));
+  const [displayDays, setDisplayDays] = useState<Date[]>([]);
+
+  // Generate days for current view mode
+  useEffect(() => {
+    const selectedDateObj = parseISO(selectedDate);
+    
+    if (viewMode === 'month') {
+      // Get first day of the month
+      const firstDay = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth(), 1);
+      // Get the start of the week containing the first day
+      const startDay = startOfWeek(firstDay, { weekStartsOn: 0 });
+      // Get last day of the month
+      const lastDay = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth() + 1, 0);
+      // Get the end of the week containing the last day
+      const endDay = endOfWeek(lastDay, { weekStartsOn: 0 });
+      
+      // Generate array of all days in the view
+      const days = eachDayOfInterval({ start: startDay, end: endDay });
+      setDisplayDays(days);
+      setCurrentMonth(format(selectedDateObj, 'yyyy-MM'));
+    } else if (viewMode === 'week') {
+      // Get the start and end of the week
+      const startDay = startOfWeek(selectedDateObj, { weekStartsOn: 0 });
+      const endDay = endOfWeek(selectedDateObj, { weekStartsOn: 0 });
+      
+      // Generate array of all days in the week
+      const days = eachDayOfInterval({ start: startDay, end: endDay });
+      setDisplayDays(days);
+    } else if (viewMode === 'day') {
+      setDisplayDays([selectedDateObj]);
+    }
+  }, [selectedDate, viewMode]);
   
   // Fetch events and calendars when the screen is focused
   useFocusEffect(
     useCallback(() => {
       if (user) {
-        const now = new Date();
-        const startDate = startOfMonth(now).toISOString();
-        const endDate = endOfMonth(now).toISOString();
-        
-        fetchEvents(user.id, startDate, endDate);
+        fetchEvents(user.id);
         fetchCustomCalendars(user.id);
         fetchDeviceCalendars();
       }
     }, [user, fetchEvents, fetchCustomCalendars, fetchDeviceCalendars])
   );
   
-  // Effect to update view date when selectedDate changes
-  useEffect(() => {
-    if (selectedDate) {
-      setViewDate(new Date(selectedDate));
-    }
-  }, [selectedDate]);
-  
   // Handler for pull-to-refresh
   const onRefresh = useCallback(async () => {
     if (user) {
       setRefreshing(true);
-      
-      // Determine date range based on current view mode
-      let startDate: string;
-      let endDate: string;
-      
-      if (viewMode === 'day') {
-        startDate = startOfWeek(viewDate).toISOString();
-        endDate = endOfWeek(viewDate).toISOString();
-      } else if (viewMode === 'week') {
-        startDate = startOfMonth(viewDate).toISOString();
-        endDate = endOfMonth(viewDate).toISOString();
-      } else {
-        // For month view, get events for a three-month period
-        startDate = startOfMonth(subMonths(viewDate, 1)).toISOString();
-        endDate = endOfMonth(addMonths(viewDate, 1)).toISOString();
-      }
-      
       await Promise.all([
-        fetchEvents(user.id, startDate, endDate),
+        fetchEvents(user.id),
         fetchCustomCalendars(user.id),
         fetchDeviceCalendars(),
       ]);
-      
       setRefreshing(false);
     }
-  }, [user, fetchEvents, fetchCustomCalendars, fetchDeviceCalendars, viewDate, viewMode]);
+  }, [user, fetchEvents, fetchCustomCalendars, fetchDeviceCalendars]);
   
-  // Get visible calendars (custom and device)
-  const visibleCalendars = [
-    ...customCalendars.filter(cal => cal.isVisible),
-    ...deviceCalendars.filter(cal => cal.isVisible),
-  ];
-  
-  // Get calendar by ID (custom or device)
-  const getCalendarById = (calendarId?: string) => {
-    if (!calendarId) return undefined;
-    
-    // Check custom calendars first
-    const customCal = customCalendars.find(cal => cal.id === calendarId);
-    if (customCal) return customCal;
-    
-    // Then check device calendars
-    const deviceCal = deviceCalendars.find(cal => cal.id === calendarId);
-    if (deviceCal) return deviceCal;
-    
-    return undefined;
-  };
-  
-  // Get events for a specific date
-  const getEventsForDate = (date: Date): CalendarEvent[] => {
+  // Get events for a specific day
+  const getEventsForDay = (day: Date): CalendarEvent[] => {
     return events.filter(event => {
-      const startDate = new Date(event.startDate);
-      const endDate = new Date(event.endDate);
+      const eventStart = parseISO(event.startDate);
+      const eventEnd = parseISO(event.endDate);
       
-      // Check if event is visible (calendar is visible)
-      const calendar = getCalendarById(event.calendarId);
-      if (calendar && 'isVisible' in calendar && !calendar.isVisible) {
-        return false;
-      }
-      
-      // Check if the date is within the event's time range
-      return isWithinInterval(date, { start: startDate, end: endDate });
+      // Check if day is between start and end dates (inclusive)
+      return (
+        (isSameDay(eventStart, day) || eventStart < day) &&
+        (isSameDay(eventEnd, day) || eventEnd > day)
+      );
     });
   };
   
   // Navigate to previous period
   const goToPrevious = () => {
-    if (viewMode === 'day') {
-      setViewDate(addDays(viewDate, -1));
+    const selectedDateObj = parseISO(selectedDate);
+    let newDate: Date;
+    
+    if (viewMode === 'month') {
+      newDate = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth() - 1, 1);
     } else if (viewMode === 'week') {
-      setViewDate(addDays(viewDate, -7));
+      newDate = addDays(selectedDateObj, -7);
     } else {
-      setViewDate(subMonths(viewDate, 1));
+      newDate = addDays(selectedDateObj, -1);
     }
+    
+    setSelectedDate(format(newDate, 'yyyy-MM-dd'));
   };
   
   // Navigate to next period
   const goToNext = () => {
-    if (viewMode === 'day') {
-      setViewDate(addDays(viewDate, 1));
+    const selectedDateObj = parseISO(selectedDate);
+    let newDate: Date;
+    
+    if (viewMode === 'month') {
+      newDate = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth() + 1, 1);
     } else if (viewMode === 'week') {
-      setViewDate(addDays(viewDate, 7));
+      newDate = addDays(selectedDateObj, 7);
     } else {
-      setViewDate(addMonths(viewDate, 1));
+      newDate = addDays(selectedDateObj, 1);
     }
+    
+    setSelectedDate(format(newDate, 'yyyy-MM-dd'));
   };
   
   // Go to today
   const goToToday = () => {
-    setViewDate(new Date());
+    setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
   };
   
-  // Format event time
-  const formatEventTime = (event: CalendarEvent): string => {
-    if (event.allDay) {
-      return 'All day';
-    }
-    
-    const startTime = format(new Date(event.startDate), 'h:mm a');
-    const endTime = format(new Date(event.endDate), 'h:mm a');
-    
-    return `${startTime} - ${endTime}`;
-  };
-  
-  // Change view mode
-  const changeViewMode = (mode: CalendarViewMode) => {
-    setViewMode(mode);
-    setViewMenuVisible(false);
-    
-    // Fetch events for the new view mode
-    if (user) {
-      let startDate: string;
-      let endDate: string;
-      
-      if (mode === 'day') {
-        startDate = startOfWeek(viewDate).toISOString();
-        endDate = endOfWeek(viewDate).toISOString();
-      } else if (mode === 'week') {
-        startDate = startOfMonth(viewDate).toISOString();
-        endDate = endOfMonth(viewDate).toISOString();
-      } else {
-        // For month view, get events for a three-month period
-        startDate = startOfMonth(subMonths(viewDate, 1)).toISOString();
-        endDate = endOfMonth(addMonths(viewDate, 1)).toISOString();
-      }
-      
-      fetchEvents(user.id, startDate, endDate);
+  // Handle day press
+  const handleDayPress = (date: Date) => {
+    setSelectedDate(format(date, 'yyyy-MM-dd'));
+    if (viewMode === 'month') {
+      setViewMode('day');
     }
   };
   
-  // Render Day View
-  const renderDayView = () => {
-    const dayEvents = getEventsForDate(viewDate);
-    
-    if (dayEvents.length === 0) {
-      return (
-        <View style={styles.emptyEventsContainer}>
-          <Text style={[styles.emptyEventsText, { color: theme.colors.text }]}>
-            No events scheduled for this day
-          </Text>
-        </View>
-      );
-    }
-    
-    // Sort events by start time
-    const sortedEvents = [...dayEvents].sort((a, b) => {
-      if (a.allDay && !b.allDay) return -1;
-      if (!a.allDay && b.allDay) return 1;
-      return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
-    });
-    
-    return (
-      <FlatList
-        data={sortedEvents}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => renderEventItem(item)}
-        contentContainerStyle={styles.eventsList}
-        ItemSeparatorComponent={() => <Divider style={styles.divider} />}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[theme.colors.primary]}
-            tintColor={theme.colors.primary}
-          />
-        }
-      />
-    );
-  };
-  
-  // Render Week View
-  const renderWeekView = () => {
-    const weekStart = startOfWeek(viewDate);
-    const weekDays = eachDayOfInterval({
-      start: weekStart,
-      end: endOfWeek(viewDate),
-    });
-    
-    return (
-      <View style={styles.weekViewContainer}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.weekHeaderScroll}
-        >
-          <View style={styles.weekHeader}>
-            {weekDays.map(day => (
-              <TouchableOpacity
-                key={day.toISOString()}
-                style={[
-                  styles.weekDayHeader,
-                  isToday(day) && { backgroundColor: theme.colors.primary + '40' },
-                  isSameDay(day, viewDate) && styles.selectedDay,
-                ]}
-                onPress={() => {
-                  setViewDate(day);
-                  setSelectedDate(day.toISOString());
-                }}
-              >
-                <Text style={[styles.weekDayName, { color: theme.colors.text }]}>
-                  {format(day, 'EEE')}
-                </Text>
-                <Text
-                  style={[
-                    styles.weekDayNumber,
-                    isToday(day) && { fontWeight: 'bold', color: theme.colors.primary },
-                    isSameDay(day, viewDate) && { color: theme.colors.primary },
-                    { color: theme.colors.text },
-                  ]}
-                >
-                  {format(day, 'd')}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
-        
-        <Divider />
-        
-        {renderDayView()}
-      </View>
-    );
-  };
-  
-  // Render Month View
-  const renderMonthView = () => {
-    const monthStart = startOfMonth(viewDate);
-    const monthEnd = endOfMonth(viewDate);
-    const startDate = startOfWeek(monthStart);
-    const endDate = endOfWeek(monthEnd);
-    
-    const days = eachDayOfInterval({ start: startDate, end: endDate });
-    
-    // Group days into weeks
-    const weeks: Date[][] = [];
-    let week: Date[] = [];
-    
-    days.forEach((day, i) => {
-      week.push(day);
-      if (i % 7 === 6) {
-        weeks.push(week);
-        week = [];
-      }
-    });
-    
-    return (
-      <View style={styles.monthViewContainer}>
-        <View style={styles.weekdayHeaderRow}>
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-            <Text
-              key={day}
-              style={[styles.weekdayHeaderText, { color: theme.colors.text }]}
-            >
-              {day}
-            </Text>
-          ))}
-        </View>
-        
-        <ScrollView
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[theme.colors.primary]}
-              tintColor={theme.colors.primary}
-            />
-          }
-        >
-          <View style={styles.monthDaysContainer}>
-            {weeks.map((week, weekIndex) => (
-              <View key={`week-${weekIndex}`} style={styles.weekRow}>
-                {week.map(day => {
-                  const dayEvents = getEventsForDate(day);
-                  const isCurrentMonth = getMonth(day) === getMonth(viewDate);
-                  
-                  return (
-                    <TouchableOpacity
-                      key={day.toISOString()}
-                      style={[
-                        styles.dayCell,
-                        isSameDay(day, viewDate) && styles.selectedDayCell,
-                        !isCurrentMonth && styles.otherMonthDay,
-                      ]}
-                      onPress={() => {
-                        setViewDate(day);
-                        setSelectedDate(day.toISOString());
-                        setViewMode('day');
-                      }}
-                    >
-                      <View
-                        style={[
-                          styles.dayCellContent,
-                          isToday(day) && styles.todayCell,
-                          isSameDay(day, viewDate) && styles.selectedDayCell,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dayNumber,
-                            !isCurrentMonth && { opacity: 0.4 },
-                            isToday(day) && styles.todayText,
-                            isSameDay(day, viewDate) && { color: theme.colors.primary },
-                            { color: theme.colors.text },
-                          ]}
-                        >
-                          {format(day, 'd')}
-                        </Text>
-                        
-                        {dayEvents.length > 0 && (
-                          <View style={styles.eventDots}>
-                            {dayEvents.slice(0, 3).map((event, i) => {
-                              const calendar = getCalendarById(event.calendarId);
-                              return (
-                                <View
-                                  key={`dot-${i}`}
-                                  style={[
-                                    styles.eventDot,
-                                    {
-                                      backgroundColor:
-                                        event.color ||
-                                        (calendar && 'color' in calendar
-                                          ? calendar.color
-                                          : theme.colors.primary),
-                                    },
-                                  ]}
-                                />
-                              );
-                            })}
-                            {dayEvents.length > 3 && (
-                              <Text style={styles.moreEvents}>+{dayEvents.length - 3}</Text>
-                            )}
-                          </View>
-                        )}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-      </View>
-    );
-  };
-  
-  // Render Event Item
-  const renderEventItem = (event: CalendarEvent) => {
-    const calendar = getCalendarById(event.calendarId);
-    const eventColor = event.color || (calendar && 'color' in calendar ? calendar.color : theme.colors.primary);
+  // Render day in month view
+  const renderMonthDay = (day: Date, index: number) => {
+    const isSelected = isSameDay(day, selectedDateObj);
+    const isCurrentMonth = isSameMonth(day, selectedDateObj);
+    const dayEvents = getEventsForDay(day);
     
     return (
       <TouchableOpacity
-        style={styles.eventItem}
+        key={index}
+        style={[
+          styles.dayCell,
+          { 
+            backgroundColor: isSelected 
+              ? theme.colors.primary + '30' 
+              : isToday(day)
+                ? theme.colors.accent + '20'
+                : theme.colors.background
+          }
+        ]}
+        onPress={() => handleDayPress(day)}
+      >
+        <Text
+          style={[
+            styles.dayNumber,
+            { 
+              color: isCurrentMonth ? theme.colors.text : theme.colors.text + '50',
+              fontWeight: isToday(day) ? 'bold' : 'normal'
+            }
+          ]}
+        >
+          {format(day, 'd')}
+        </Text>
+        
+        {dayEvents.length > 0 && (
+          <View style={styles.eventIndicatorContainer}>
+            {dayEvents.slice(0, 3).map((event, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.eventIndicator,
+                  { backgroundColor: getEventBackgroundColor(event, customCalendars) }
+                ]}
+              />
+            ))}
+            {dayEvents.length > 3 && (
+              <Text style={styles.moreEventsText}>+{dayEvents.length - 3}</Text>
+            )}
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+  
+  // Render day in week view
+  const renderWeekDay = (day: Date, index: number) => {
+    const isSelected = isSameDay(day, selectedDateObj);
+    const dayEvents = getEventsForDay(day);
+    
+    return (
+      <View key={index} style={styles.weekDayColumn}>
+        <TouchableOpacity
+          style={[
+            styles.weekDayHeader,
+            {
+              backgroundColor: isSelected
+                ? theme.colors.primary + '30'
+                : isToday(day)
+                  ? theme.colors.accent + '20'
+                  : theme.colors.background
+            }
+          ]}
+          onPress={() => handleDayPress(day)}
+        >
+          <Text style={[styles.weekDayName, { color: theme.colors.text }]}>
+            {format(day, 'EEE')}
+          </Text>
+          <Text
+            style={[
+              styles.weekDayNumber,
+              {
+                color: theme.colors.text,
+                fontWeight: isToday(day) ? 'bold' : 'normal'
+              }
+            ]}
+          >
+            {format(day, 'd')}
+          </Text>
+        </TouchableOpacity>
+        
+        <FlatList
+          data={dayEvents}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => renderEventItem(item, true)}
+          contentContainerStyle={styles.weekDayEvents}
+        />
+      </View>
+    );
+  };
+  
+  // Render event item
+  const renderEventItem = (event: CalendarEvent, isCompact: boolean = false) => {
+    const startTime = format(parseISO(event.startDate), 'HH:mm');
+    const endTime = format(parseISO(event.endDate), 'HH:mm');
+    const backgroundColor = getEventBackgroundColor(event, customCalendars);
+    
+    if (isCompact) {
+      return (
+        <TouchableOpacity
+          style={[
+            styles.compactEventItem,
+            { backgroundColor: backgroundColor + 'E6' }
+          ]}
+          onPress={() => navigation.navigate('EventDetail', { eventId: event.id })}
+        >
+          <Text style={styles.compactEventTime}>
+            {event.allDay ? 'All day' : startTime}
+          </Text>
+          <Text style={styles.compactEventTitle} numberOfLines={1}>
+            {event.title}
+          </Text>
+        </TouchableOpacity>
+      );
+    }
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.eventItem,
+          { backgroundColor: theme.colors.card }
+        ]}
         onPress={() => navigation.navigate('EventDetail', { eventId: event.id })}
       >
-        <View style={[styles.eventColorIndicator, { backgroundColor: eventColor }]} />
+        <View
+          style={[
+            styles.eventColorIndicator,
+            { backgroundColor }
+          ]}
+        />
         <View style={styles.eventContent}>
           <Text style={[styles.eventTitle, { color: theme.colors.text }]}>
             {event.title}
           </Text>
-          
-          <Text style={[styles.eventTime, { color: theme.colors.text }]}>
-            {formatEventTime(event)}
+          <Text style={[styles.eventTime, { color: theme.colors.text + 'CC' }]}>
+            {event.allDay ? 'All day' : `${startTime} - ${endTime}`}
           </Text>
-          
           {event.location && (
-            <View style={styles.eventLocationRow}>
-              <Ionicons name="location-outline" size={14} color={theme.colors.text} />
-              <Text style={[styles.eventLocation, { color: theme.colors.text }]}>
-                {event.location}
-              </Text>
-            </View>
+            <Text style={[styles.eventLocation, { color: theme.colors.text + 'CC' }]}>
+              📍 {event.location}
+            </Text>
           )}
         </View>
       </TouchableOpacity>
     );
   };
   
-  // Render view title
-  const renderViewTitle = () => {
-    if (viewMode === 'day') {
-      return format(viewDate, 'EEEE, MMMM d, yyyy');
-    } else if (viewMode === 'week') {
-      const weekStart = startOfWeek(viewDate);
-      const weekEnd = endOfWeek(viewDate);
-      
-      if (getMonth(weekStart) === getMonth(weekEnd)) {
-        return `${format(weekStart, 'MMMM d')} - ${format(weekEnd, 'd, yyyy')}`;
-      } else if (getYear(weekStart) === getYear(weekEnd)) {
-        return `${format(weekStart, 'MMMM d')} - ${format(weekEnd, 'MMMM d, yyyy')}`;
-      } else {
-        return `${format(weekStart, 'MMMM d, yyyy')} - ${format(weekEnd, 'MMMM d, yyyy')}`;
-      }
-    } else {
-      return format(viewDate, 'MMMM yyyy');
+  // Render view based on mode
+  const renderCalendarView = () => {
+    switch (viewMode) {
+      case 'month':
+        return (
+          <View style={styles.monthContainer}>
+            {/* Weekday headers */}
+            <View style={styles.weekdayHeader}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
+                <Text
+                  key={index}
+                  style={[styles.weekdayText, { color: theme.colors.text }]}
+                >
+                  {day}
+                </Text>
+              ))}
+            </View>
+            
+            {/* Calendar grid */}
+            <View style={styles.monthGrid}>
+              {displayDays.map((day, index) => renderMonthDay(day, index))}
+            </View>
+            
+            {/* Selected day events */}
+            <View style={styles.selectedDayEvents}>
+              <Text style={[styles.selectedDayTitle, { color: theme.colors.primary }]}>
+                {format(selectedDateObj, 'EEEE, MMMM d, yyyy')}
+              </Text>
+              <Divider style={styles.divider} />
+              
+              <FlatList
+                data={getEventsForDay(selectedDateObj)}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => renderEventItem(item)}
+                ListEmptyComponent={
+                  <View style={styles.emptyEventsContainer}>
+                    <Text style={{ color: theme.colors.text + '80' }}>
+                      No events for this day
+                    </Text>
+                  </View>
+                }
+                contentContainerStyle={
+                  getEventsForDay(selectedDateObj).length === 0
+                    ? { flex: 1 }
+                    : undefined
+                }
+              />
+            </View>
+          </View>
+        );
+        
+      case 'week':
+        return (
+          <View style={styles.weekContainer}>
+            <ScrollView horizontal>
+              {displayDays.map((day, index) => renderWeekDay(day, index))}
+            </ScrollView>
+          </View>
+        );
+        
+      case 'day':
+        return (
+          <View style={styles.dayContainer}>
+            <Text style={[styles.selectedDayTitle, { color: theme.colors.primary }]}>
+              {format(selectedDateObj, 'EEEE, MMMM d, yyyy')}
+            </Text>
+            <Divider style={styles.divider} />
+            
+            <FlatList
+              data={getEventsForDay(selectedDateObj)}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => renderEventItem(item)}
+              ListEmptyComponent={
+                <View style={styles.emptyEventsContainer}>
+                  <Text style={{ color: theme.colors.text + '80' }}>
+                    No events for this day
+                  </Text>
+                </View>
+              }
+              contentContainerStyle={
+                getEventsForDay(selectedDateObj).length === 0
+                  ? { flex: 1 }
+                  : undefined
+              }
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={[theme.colors.primary]}
+                  tintColor={theme.colors.primary}
+                />
+              }
+            />
+          </View>
+        );
+    }
+  };
+  
+  // Get title for header based on view mode
+  const getHeaderTitle = () => {
+    switch (viewMode) {
+      case 'month':
+        return format(selectedDateObj, 'MMMM yyyy');
+      case 'week':
+        const startDay = startOfWeek(selectedDateObj, { weekStartsOn: 0 });
+        const endDay = endOfWeek(selectedDateObj, { weekStartsOn: 0 });
+        return `${format(startDay, 'MMM d')} - ${format(endDay, 'MMM d, yyyy')}`;
+      case 'day':
+        return format(selectedDateObj, 'MMMM d, yyyy');
     }
   };
   
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <View style={styles.header}>
-        <View style={styles.headerControls}>
-          <IconButton
-            icon="chevron-left"
-            size={24}
-            onPress={goToPrevious}
-            color={theme.colors.text}
-          />
-          
-          <TouchableOpacity 
-            style={styles.titleContainer}
-            onPress={() => setViewMenuVisible(true)}
-          >
-            <Text style={[styles.headerTitle, { color: theme.colors.primary }]}>
-              {renderViewTitle()}
+      {/* Calendar header */}
+      <Appbar.Header style={{ backgroundColor: theme.colors.card }}>
+        <View style={styles.headerContent}>
+          <View style={styles.headerTitle}>
+            <Text style={[styles.headerTitleText, { color: theme.colors.text }]}>
+              {getHeaderTitle()}
             </Text>
-            <MaterialCommunityIcons 
-              name="chevron-down" 
-              size={20} 
-              color={theme.colors.primary} 
-              style={{ marginLeft: 4 }}
-            />
-          </TouchableOpacity>
+          </View>
           
-          <Menu
-            visible={viewMenuVisible}
-            onDismiss={() => setViewMenuVisible(false)}
-            anchor={<View />}
-            style={{ marginTop: 50 }}
-          >
-            <Menu.Item
-              onPress={() => changeViewMode('day')}
-              title="Day View"
-              icon="calendar-day"
-            />
-            <Menu.Item
-              onPress={() => changeViewMode('week')}
-              title="Week View"
-              icon="calendar-week"
-            />
-            <Menu.Item
-              onPress={() => changeViewMode('month')}
-              title="Month View"
-              icon="calendar-month"
-            />
-            <Divider />
-            <Menu.Item
-              onPress={goToToday}
-              title="Go to Today"
+          <View style={styles.headerControls}>
+            <IconButton
               icon="calendar-today"
-            />
-          </Menu>
-          
-          <IconButton
-            icon="chevron-right"
-            size={24}
-            onPress={goToNext}
-            color={theme.colors.text}
-          />
-        </View>
-        
-        <View style={styles.headerActions}>
-          <IconButton
-            icon="calendar-check"
-            size={24}
-            onPress={() => setCalendarMenuVisible(true)}
-            color={theme.colors.primary}
-          />
-          
-          <Menu
-            visible={calendarMenuVisible}
-            onDismiss={() => setCalendarMenuVisible(false)}
-            anchor={<View />}
-            style={{ marginTop: 50 }}
-          >
-            <Menu.Item
-              onPress={() => navigation.navigate('CalendarSettings')}
-              title="Calendar Settings"
-              icon="cog"
-            />
-            <Divider />
-            <Menu.Item
+              size={24}
               onPress={goToToday}
-              title="Go to Today"
-              icon="calendar-today"
+              color={theme.colors.primary}
             />
-          </Menu>
+            <IconButton
+              icon="chevron-left"
+              size={24}
+              onPress={goToPrevious}
+              color={theme.colors.text}
+            />
+            <IconButton
+              icon="chevron-right"
+              size={24}
+              onPress={goToNext}
+              color={theme.colors.text}
+            />
+            <IconButton
+              icon={
+                viewMode === 'month'
+                  ? 'calendar-month'
+                  : viewMode === 'week'
+                    ? 'calendar-week'
+                    : 'calendar-today'
+              }
+              size={24}
+              onPress={() => setViewModeMenuVisible(true)}
+              color={theme.colors.text}
+            />
+            <Menu
+              visible={viewModeMenuVisible}
+              onDismiss={() => setViewModeMenuVisible(false)}
+              anchor={<View />}
+            >
+              <Menu.Item
+                onPress={() => {
+                  setViewMode('month');
+                  setViewModeMenuVisible(false);
+                }}
+                title="Month View"
+                icon="calendar-month"
+              />
+              <Menu.Item
+                onPress={() => {
+                  setViewMode('week');
+                  setViewModeMenuVisible(false);
+                }}
+                title="Week View"
+                icon="calendar-week"
+              />
+              <Menu.Item
+                onPress={() => {
+                  setViewMode('day');
+                  setViewModeMenuVisible(false);
+                }}
+                title="Day View"
+                icon="calendar-today"
+              />
+            </Menu>
+            <IconButton
+              icon="calendar-multiple"
+              size={24}
+              onPress={() => setCalendarMenuVisible(true)}
+              color={theme.colors.text}
+            />
+            <Menu
+              visible={calendarMenuVisible}
+              onDismiss={() => setCalendarMenuVisible(false)}
+              anchor={<View />}
+            >
+              <Menu.Item
+                onPress={() => navigation.navigate('CalendarSettings')}
+                title="Calendar Settings"
+                icon="cog"
+              />
+              <Divider />
+              {customCalendars.map(calendar => (
+                <Menu.Item
+                  key={calendar.id}
+                  onPress={() => {
+                    // This would be implemented if we had a toggleCustomCalendarVisibility function
+                    // toggleCustomCalendarVisibility(calendar.id);
+                  }}
+                  title={calendar.name}
+                  icon={({ size, color }) => (
+                    <View
+                      style={[
+                        styles.calendarColorIcon,
+                        { backgroundColor: calendar.color }
+                      ]}
+                    />
+                  )}
+                  right={({ size, color }) => (
+                    <IconButton
+                      icon={calendar.isVisible ? 'eye' : 'eye-off'}
+                      size={size}
+                      color={color}
+                    />
+                  )}
+                />
+              ))}
+              {deviceCalendars.map(calendar => (
+                <Menu.Item
+                  key={calendar.id}
+                  onPress={() => toggleDeviceCalendarVisibility(calendar.id)}
+                  title={calendar.title}
+                  icon={({ size, color }) => (
+                    <View
+                      style={[
+                        styles.calendarColorIcon,
+                        { backgroundColor: calendar.color || '#909090' }
+                      ]}
+                    />
+                  )}
+                  right={({ size, color }) => (
+                    <IconButton
+                      icon={calendar.isVisible ? 'eye' : 'eye-off'}
+                      size={size}
+                      color={color}
+                    />
+                  )}
+                />
+              ))}
+            </Menu>
+          </View>
         </View>
-      </View>
+      </Appbar.Header>
       
-      {isLoading && !refreshing ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={[styles.loadingText, { color: theme.colors.text }]}>
-            Loading events...
-          </Text>
-        </View>
-      ) : viewMode === 'day' ? (
-        renderDayView()
-      ) : viewMode === 'week' ? (
-        renderWeekView()
-      ) : (
-        renderMonthView()
-      )}
+      {/* Calendar view */}
+      {renderCalendarView()}
       
+      {/* FAB for adding new events */}
       <FAB
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
         icon="plus"
-        onPress={() => navigation.navigate('CreateEvent', { date: viewDate.toISOString() })}
+        onPress={() => navigation.navigate('CreateEvent', { date: selectedDate })}
         color={paperTheme.colors.surface}
       />
     </View>
@@ -618,59 +617,90 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    padding: 16,
+  headerContent: {
+    flex: 1,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerTitle: {
+    flex: 1,
+    paddingLeft: 16,
+  },
+  headerTitleText: {
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   headerControls: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  titleContainer: {
+  weekdayHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    padding: 8,
   },
-  headerTitle: {
+  weekdayText: {
+    flex: 1,
+    textAlign: 'center',
+    fontWeight: '500',
+    fontSize: 14,
+  },
+  monthContainer: {
+    flex: 1,
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    padding: 4,
+    borderWidth: 0.5,
+    borderColor: '#ddd',
+  },
+  dayNumber: {
+    fontSize: 14,
+    fontWeight: '400',
+  },
+  eventIndicatorContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  eventIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 2,
+    marginBottom: 2,
+  },
+  moreEventsText: {
+    fontSize: 10,
+    color: '#666',
+  },
+  selectedDayEvents: {
+    flex: 1,
+    padding: 16,
+  },
+  selectedDayTitle: {
     fontSize: 18,
     fontWeight: 'bold',
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-  },
-  emptyEventsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyEventsText: {
-    fontSize: 16,
-    textAlign: 'center',
-    opacity: 0.7,
-  },
-  eventsList: {
-    padding: 16,
+  divider: {
+    marginVertical: 8,
   },
   eventItem: {
     flexDirection: 'row',
-    padding: 16,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    elevation: 1,
   },
   eventColorIndicator: {
     width: 4,
-    marginRight: 12,
     borderRadius: 2,
+    marginRight: 12,
   },
   eventContent: {
     flex: 1,
@@ -682,121 +712,64 @@ const styles = StyleSheet.create({
   },
   eventTime: {
     fontSize: 14,
-    opacity: 0.7,
     marginBottom: 4,
-  },
-  eventLocationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   eventLocation: {
     fontSize: 14,
-    opacity: 0.7,
-    marginLeft: 4,
   },
-  divider: {
-    marginLeft: 16,
+  emptyEventsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  weekViewContainer: {
+  weekContainer: {
     flex: 1,
   },
-  weekHeaderScroll: {
-    maxHeight: 80,
-  },
-  weekHeader: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+  weekDayColumn: {
+    width: 150,
+    borderRightWidth: 0.5,
+    borderColor: '#ddd',
   },
   weekDayHeader: {
-    width: 60,
+    padding: 8,
     alignItems: 'center',
-    paddingVertical: 8,
-    marginHorizontal: 4,
-    borderRadius: 8,
-  },
-  selectedDay: {
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
+    borderBottomWidth: 0.5,
+    borderColor: '#ddd',
   },
   weekDayName: {
-    fontSize: 12,
-    opacity: 0.7,
-    marginBottom: 4,
+    fontSize: 14,
+    fontWeight: '500',
   },
   weekDayNumber: {
     fontSize: 18,
+    fontWeight: '400',
+  },
+  weekDayEvents: {
+    padding: 4,
+  },
+  compactEventItem: {
+    padding: 4,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  compactEventTime: {
+    fontSize: 10,
+    color: 'white',
     fontWeight: '500',
   },
-  monthViewContainer: {
-    flex: 1,
-  },
-  weekdayHeaderRow: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  weekdayHeaderText: {
-    flex: 1,
+  compactEventTitle: {
     fontSize: 12,
-    textAlign: 'center',
-    opacity: 0.7,
+    color: 'white',
+    fontWeight: '500',
   },
-  monthDaysContainer: {
+  dayContainer: {
     flex: 1,
-    padding: 8,
+    padding: 16,
   },
-  weekRow: {
-    flexDirection: 'row',
-    height: 70,
-    marginBottom: 8,
-  },
-  dayCell: {
-    flex: 1,
-    margin: 2,
+  calendarColorIcon: {
+    width: 16,
+    height: 16,
     borderRadius: 8,
-  },
-  dayCellContent: {
-    flex: 1,
-    padding: 4,
-    alignItems: 'center',
-  },
-  dayNumber: {
-    fontSize: 14,
-    marginBottom: 2,
-  },
-  todayCell: {
-    backgroundColor: 'rgba(0, 123, 255, 0.1)',
-    borderRadius: 8,
-  },
-  todayText: {
-    fontWeight: 'bold',
-  },
-  selectedDayCell: {
-    borderWidth: 1,
-    borderColor: 'rgba(0, 123, 255, 0.5)',
-    borderRadius: 8,
-  },
-  otherMonthDay: {
-    opacity: 0.5,
-  },
-  eventDots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  eventDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginHorizontal: 1,
-  },
-  moreEvents: {
-    fontSize: 8,
-    marginLeft: 2,
   },
   fab: {
     position: 'absolute',
