@@ -5,6 +5,7 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
+  Alert,
   Dimensions,
 } from 'react-native';
 import {
@@ -15,8 +16,8 @@ import {
   Menu,
   IconButton,
   useTheme as usePaperTheme,
-  Card,
   Chip,
+  Card,
 } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -24,10 +25,14 @@ import { NotesStackParamList } from '../../navigation/feature/NotesNavigator';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import useNoteStore from '../../stores/useNoteStore';
-import { Note, NoteFolder, NoteSortOption } from '../../models/Note';
-import { format } from 'date-fns';
+import { Note, NoteFolder, NoteFilter, NoteSortOption } from '../../models/Note';
+import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { format, formatDistanceToNow } from 'date-fns';
 
 type NotesScreenNavigationProp = StackNavigationProp<NotesStackParamList, 'NotesList'>;
+
+const { width } = Dimensions.get('window');
+const numColumns = width > 600 ? 3 : 2;
 
 const NotesScreen: React.FC = () => {
   const navigation = useNavigation<NotesScreenNavigationProp>();
@@ -39,6 +44,7 @@ const NotesScreen: React.FC = () => {
     notes,
     folders,
     isLoading,
+    error,
     filter,
     sortOption,
     fetchNotes,
@@ -52,14 +58,10 @@ const NotesScreen: React.FC = () => {
   
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [menuVisible, setMenuVisible] = useState(false);
   const [sortMenuVisible, setSortMenuVisible] = useState(false);
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
-  const [selectedFolder, setSelectedFolder] = useState<string | undefined>(undefined);
-  
-  // Calculate the number of columns based on screen width
-  const screenWidth = Dimensions.get('window').width;
-  const numColumns = viewMode === 'grid' ? Math.floor(screenWidth / 180) : 1;
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   
   // Fetch notes and folders when the screen is focused
   useFocusEffect(
@@ -81,16 +83,6 @@ const NotesScreen: React.FC = () => {
     }
   }, [searchQuery, setFilter, filter]);
   
-  // Effect to update folder filter when selected folder changes
-  useEffect(() => {
-    if (selectedFolder) {
-      setFilter({ ...filter, folderId: selectedFolder });
-    } else if (filter.folderId) {
-      const { folderId, ...restFilter } = filter;
-      setFilter(restFilter);
-    }
-  }, [selectedFolder, setFilter, filter]);
-  
   // Handler for pull-to-refresh
   const onRefresh = useCallback(async () => {
     if (user) {
@@ -105,23 +97,18 @@ const NotesScreen: React.FC = () => {
   
   // Filter notes based on current filters
   const filteredNotes = notes.filter(note => {
-    // Skip if note is archived and we're not showing archived notes
-    if (filter.isArchived !== true && note.isArchived) {
+    // Skip if note is archived and we're not explicitly viewing archived notes
+    if (filter.isArchived === undefined && note.isArchived) {
       return false;
     }
     
-    // Skip if we're showing only archived notes but the note is not archived
-    if (filter.isArchived === true && !note.isArchived) {
+    // Skip if note doesn't match the archive filter
+    if (filter.isArchived !== undefined && note.isArchived !== filter.isArchived) {
       return false;
     }
     
     // Skip if note doesn't match the folder filter
     if (filter.folderId && note.folderId !== filter.folderId) {
-      return false;
-    }
-    
-    // Skip if note doesn't match the pinned filter
-    if (filter.isPinned === true && !note.isPinned) {
       return false;
     }
     
@@ -137,35 +124,40 @@ const NotesScreen: React.FC = () => {
     return true;
   });
   
-  // Sort filtered notes
-  const sortedNotes = [...filteredNotes].sort((a, b) => {
-    // Always put pinned notes at the top regardless of sort option
-    if (a.isPinned && !b.isPinned) return -1;
-    if (!a.isPinned && b.isPinned) return 1;
-    
-    switch (sortOption) {
-      case 'title-asc':
-        return a.title.localeCompare(b.title);
-        
-      case 'title-desc':
-        return b.title.localeCompare(a.title);
-        
-      case 'createdAt-asc':
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        
-      case 'createdAt-desc':
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        
-      case 'updatedAt-asc':
-        return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-        
-      case 'updatedAt-desc':
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-        
-      default:
-        return 0;
-    }
-  });
+  // Separate pinned notes
+  const pinnedNotes = filteredNotes.filter(note => note.isPinned);
+  const unpinnedNotes = filteredNotes.filter(note => !note.isPinned);
+  
+  // Sort notes
+  const sortNotes = (notesToSort: Note[]): Note[] => {
+    return [...notesToSort].sort((a, b) => {
+      switch (sortOption) {
+        case 'title-asc':
+          return a.title.localeCompare(b.title);
+          
+        case 'title-desc':
+          return b.title.localeCompare(a.title);
+          
+        case 'createdAt-asc':
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          
+        case 'createdAt-desc':
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          
+        case 'updatedAt-asc':
+          return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+          
+        case 'updatedAt-desc':
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          
+        default:
+          return 0;
+      }
+    });
+  };
+  
+  const sortedPinnedNotes = sortNotes(pinnedNotes);
+  const sortedUnpinnedNotes = sortNotes(unpinnedNotes);
   
   // Get folder by ID
   const getFolderById = (folderId?: string): NoteFolder | undefined => {
@@ -173,39 +165,39 @@ const NotesScreen: React.FC = () => {
     return folders.find(folder => folder.id === folderId);
   };
   
-  // Format date
+  // Format date for display
   const formatDate = (dateString: string): string => {
-    return format(new Date(dateString), 'MMM d, yyyy');
-  };
-  
-  // Handle note press
-  const handleNotePress = (noteId: string) => {
-    navigation.navigate('NoteDetail', { noteId });
+    const date = new Date(dateString);
+    return formatDistanceToNow(date, { addSuffix: true });
   };
   
   // Handle note long press
   const handleNoteLongPress = (note: Note) => {
-    // Show options menu for the note
+    setSelectedNote(note);
+    setMenuVisible(true);
   };
   
-  // Render note item in grid view
-  const renderNoteGridItem = ({ item }: { item: Note }) => {
+  // Render note card
+  const renderNoteCard = ({ item }: { item: Note }) => {
     const folder = getFolderById(item.folderId);
-    const noteColor = item.color || theme.colors.card;
+    const cardColor = item.color || (folder?.color ? `${folder.color}40` : undefined);
     
     return (
       <TouchableOpacity
-        style={[styles.gridItem, { margin: 6 }]}
-        onPress={() => handleNotePress(item.id)}
+        style={styles.cardContainer}
+        onPress={() => navigation.navigate('NoteDetail', { noteId: item.id })}
         onLongPress={() => handleNoteLongPress(item)}
       >
         <Card
           style={[
-            styles.noteCard,
-            { backgroundColor: noteColor }
+            styles.card,
+            {
+              backgroundColor: cardColor || theme.colors.card,
+              borderColor: theme.colors.border,
+            },
           ]}
         >
-          <Card.Content style={styles.noteContent}>
+          <Card.Content style={styles.cardContent}>
             <View style={styles.noteHeader}>
               <Text
                 style={[styles.noteTitle, { color: theme.colors.text }]}
@@ -220,32 +212,31 @@ const NotesScreen: React.FC = () => {
                   size={16}
                   color={theme.colors.primary}
                   style={styles.pinIcon}
-                  onPress={() => togglePinned(item.id)}
                 />
               )}
             </View>
             
             <Text
-              style={[styles.notePreview, { color: theme.colors.text }]}
-              numberOfLines={6}
+              style={[styles.noteContent, { color: theme.colors.text }]}
+              numberOfLines={5}
             >
               {item.content}
             </Text>
             
             <View style={styles.noteFooter}>
-              <Text style={[styles.noteDate, { color: theme.colors.text }]}>
-                {formatDate(item.updatedAt)}
-              </Text>
-              
               {folder && (
                 <Chip
-                  style={[styles.folderChip, { backgroundColor: folder.color || theme.colors.primary }]}
-                  textStyle={{ color: 'white', fontSize: 10 }}
-                  onPress={() => setSelectedFolder(folder.id)}
+                  style={[styles.folderChip, { backgroundColor: folder.color }]}
+                  textStyle={styles.folderChipText}
+                  compact
                 >
                   {folder.name}
                 </Chip>
               )}
+              
+              <Text style={[styles.dateText, { color: theme.colors.text + '80' }]}>
+                {formatDate(item.updatedAt)}
+              </Text>
             </View>
           </Card.Content>
         </Card>
@@ -253,79 +244,18 @@ const NotesScreen: React.FC = () => {
     );
   };
   
-  // Render note item in list view
-  const renderNoteListItem = ({ item }: { item: Note }) => {
-    const folder = getFolderById(item.folderId);
-    const noteColor = item.color || theme.colors.card;
-    
-    return (
-      <TouchableOpacity
-        style={styles.listItem}
-        onPress={() => handleNotePress(item.id)}
-        onLongPress={() => handleNoteLongPress(item)}
-      >
-        <Card
-          style={[
-            styles.noteListCard,
-            { backgroundColor: noteColor }
-          ]}
-        >
-          <Card.Content style={styles.noteListContent}>
-            <View style={styles.noteListHeader}>
-              <Text
-                style={[styles.noteTitle, { color: theme.colors.text }]}
-                numberOfLines={1}
-              >
-                {item.title}
-              </Text>
-              
-              <View style={styles.noteListActions}>
-                {item.isPinned && (
-                  <IconButton
-                    icon="pin"
-                    size={16}
-                    color={theme.colors.primary}
-                    style={styles.pinIcon}
-                    onPress={() => togglePinned(item.id)}
-                  />
-                )}
-              </View>
-            </View>
-            
-            <Text
-              style={[styles.notePreview, { color: theme.colors.text }]}
-              numberOfLines={2}
-            >
-              {item.content}
-            </Text>
-            
-            <View style={styles.noteListFooter}>
-              <Text style={[styles.noteDate, { color: theme.colors.text }]}>
-                {formatDate(item.updatedAt)}
-              </Text>
-              
-              {folder && (
-                <Chip
-                  style={[styles.folderChip, { backgroundColor: folder.color || theme.colors.primary }]}
-                  textStyle={{ color: 'white', fontSize: 10 }}
-                  onPress={() => setSelectedFolder(folder.id)}
-                >
-                  {folder.name}
-                </Chip>
-              )}
-            </View>
-          </Card.Content>
-        </Card>
-      </TouchableOpacity>
-    );
-  };
-  
-  // Render empty list message
-  const renderEmptyList = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={[styles.emptyMessage, { color: theme.colors.text }]}>
-        {searchQuery.trim() !== '' ? 'No notes match your search.' : 'No notes yet. Create your first note!'}
+  // Render section header
+  const renderSectionHeader = (title: string) => (
+    <View
+      style={[
+        styles.sectionHeader,
+        { backgroundColor: theme.colors.background }
+      ]}
+    >
+      <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>
+        {title}
       </Text>
+      <Divider style={styles.divider} />
     </View>
   );
   
@@ -335,22 +265,20 @@ const NotesScreen: React.FC = () => {
     
     return (
       <View style={styles.folderChipsContainer}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.folderChipsContent}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Chip
-            selected={selectedFolder === undefined}
-            style={[
-              styles.folderFilterChip,
-              selectedFolder === undefined ? { backgroundColor: theme.colors.primary } : { backgroundColor: theme.colors.card }
-            ]}
-            textStyle={{ 
-              color: selectedFolder === undefined ? 'white' : theme.colors.text,
-              fontSize: 12
+            selected={!filter.folderId}
+            onPress={() => {
+              const { folderId, ...restFilter } = filter;
+              setFilter(restFilter);
             }}
-            onPress={() => setSelectedFolder(undefined)}
+            style={[
+              styles.filterChip,
+              { backgroundColor: !filter.folderId ? theme.colors.primary : theme.colors.card }
+            ]}
+            textStyle={{
+              color: !filter.folderId ? 'white' : theme.colors.text
+            }}
           >
             All Notes
           </Chip>
@@ -358,18 +286,19 @@ const NotesScreen: React.FC = () => {
           {folders.map(folder => (
             <Chip
               key={folder.id}
-              selected={selectedFolder === folder.id}
+              selected={filter.folderId === folder.id}
+              onPress={() => setFilter({ ...filter, folderId: folder.id })}
               style={[
-                styles.folderFilterChip,
-                selectedFolder === folder.id
-                  ? { backgroundColor: folder.color || theme.colors.primary }
-                  : { backgroundColor: theme.colors.card }
+                styles.filterChip,
+                {
+                  backgroundColor: filter.folderId === folder.id
+                    ? folder.color
+                    : theme.colors.card
+                }
               ]}
-              textStyle={{ 
-                color: selectedFolder === folder.id ? 'white' : theme.colors.text,
-                fontSize: 12
+              textStyle={{
+                color: filter.folderId === folder.id ? 'white' : theme.colors.text
               }}
-              onPress={() => setSelectedFolder(folder.id === selectedFolder ? undefined : folder.id)}
             >
               {folder.name}
             </Chip>
@@ -392,12 +321,12 @@ const NotesScreen: React.FC = () => {
           placeholderTextColor={theme.colors.text + '80'}
         />
         
-        <View style={styles.actionRow}>
+        <View style={styles.filterRow}>
           <IconButton
-            icon="filter-variant"
+            icon={filter.isArchived ? "archive" : "note"}
             size={24}
             onPress={() => setFilterMenuVisible(true)}
-            color={Object.keys(filter).length > 0 ? theme.colors.primary : theme.colors.text}
+            color={filter.isArchived ? theme.colors.primary : theme.colors.text}
           />
           
           <Menu
@@ -408,11 +337,12 @@ const NotesScreen: React.FC = () => {
           >
             <Menu.Item
               onPress={() => {
-                setFilter({ ...filter, isPinned: true });
+                const { isArchived, ...restFilter } = filter;
+                setFilter(restFilter);
                 setFilterMenuVisible(false);
               }}
-              title="Pinned Notes"
-              icon="pin"
+              title="Active Notes"
+              icon="note"
             />
             <Menu.Item
               onPress={() => {
@@ -426,7 +356,6 @@ const NotesScreen: React.FC = () => {
             <Menu.Item
               onPress={() => {
                 resetFilter();
-                setSelectedFolder(undefined);
                 setFilterMenuVisible(false);
               }}
               title="Clear Filters"
@@ -452,8 +381,8 @@ const NotesScreen: React.FC = () => {
                 setSortOption('updatedAt-desc');
                 setSortMenuVisible(false);
               }}
-              title="Last Updated"
-              icon="update"
+              title="Last Modified"
+              icon="clock-outline"
             />
             <Menu.Item
               onPress={() => {
@@ -461,7 +390,7 @@ const NotesScreen: React.FC = () => {
                 setSortMenuVisible(false);
               }}
               title="Date Created"
-              icon="creation"
+              icon="calendar-plus"
             />
             <Menu.Item
               onPress={() => {
@@ -480,29 +409,29 @@ const NotesScreen: React.FC = () => {
               icon="sort-alphabetical-descending"
             />
           </Menu>
-          
-          <IconButton
-            icon={viewMode === 'grid' ? 'view-list' : 'view-grid'}
-            size={24}
-            onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-            color={theme.colors.text}
-          />
         </View>
       </View>
       
-      {renderFolderChips()}
-      
       <FlatList
-        data={sortedNotes}
-        keyExtractor={item => item.id}
-        renderItem={viewMode === 'grid' ? renderNoteGridItem : renderNoteListItem}
-        numColumns={viewMode === 'grid' ? numColumns : 1}
-        key={viewMode} // Force re-render when view mode changes
-        contentContainerStyle={[
-          styles.notesList,
-          sortedNotes.length === 0 && styles.emptyList
+        data={[
+          ...(sortedPinnedNotes.length > 0 ? [{ type: 'header', title: 'Pinned' }] : []),
+          ...(sortedPinnedNotes.length > 0
+            ? sortedPinnedNotes.map(note => ({ type: 'note', data: note }))
+            : []),
+          ...(sortedPinnedNotes.length > 0 && sortedUnpinnedNotes.length > 0
+            ? [{ type: 'header', title: 'Other Notes' }]
+            : []),
+          ...sortedUnpinnedNotes.map(note => ({ type: 'note', data: note })),
         ]}
-        ListEmptyComponent={renderEmptyList}
+        keyExtractor={(item, index) => `${item.type}-${index}`}
+        numColumns={numColumns}
+        renderItem={({ item }) => {
+          if (item.type === 'header') {
+            return renderSectionHeader(item.title);
+          } else {
+            return renderNoteCard({ item: item.data });
+          }
+        }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -511,7 +440,86 @@ const NotesScreen: React.FC = () => {
             tintColor={theme.colors.primary}
           />
         }
+        contentContainerStyle={styles.listContent}
       />
+      
+      <Menu
+        visible={menuVisible && selectedNote !== null}
+        onDismiss={() => {
+          setMenuVisible(false);
+          setSelectedNote(null);
+        }}
+        anchor={<View />}
+      >
+        <Menu.Item
+          onPress={() => {
+            if (selectedNote) {
+              togglePinned(selectedNote.id);
+              setMenuVisible(false);
+              setSelectedNote(null);
+            }
+          }}
+          title={selectedNote?.isPinned ? 'Unpin' : 'Pin'}
+          icon={selectedNote?.isPinned ? 'pin-off' : 'pin'}
+        />
+        <Menu.Item
+          onPress={() => {
+            if (selectedNote) {
+              toggleArchived(selectedNote.id);
+              setMenuVisible(false);
+              setSelectedNote(null);
+            }
+          }}
+          title={selectedNote?.isArchived ? 'Unarchive' : 'Archive'}
+          icon={selectedNote?.isArchived ? 'package-up' : 'archive'}
+        />
+        <Divider />
+        <Menu.Item
+          onPress={() => {
+            if (selectedNote) {
+              navigation.navigate('NoteDetail', { noteId: selectedNote.id });
+              setMenuVisible(false);
+              setSelectedNote(null);
+            }
+          }}
+          title="Edit"
+          icon="pencil"
+        />
+        <Menu.Item
+          onPress={() => {
+            if (selectedNote) {
+              Alert.alert(
+                'Delete Note',
+                'Are you sure you want to delete this note?',
+                [
+                  {
+                    text: 'Cancel',
+                    style: 'cancel',
+                  },
+                  {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        // We would call deleteNote here if it was implemented
+                        // await deleteNote(selectedNote.id);
+                        Alert.alert('Delete functionality to be implemented');
+                      } catch (error) {
+                        console.error('Failed to delete note:', error);
+                        Alert.alert('Error', 'Failed to delete note');
+                      }
+                    },
+                  },
+                ]
+              );
+              setMenuVisible(false);
+              setSelectedNote(null);
+            }
+          }}
+          title="Delete"
+          icon="delete"
+        />
+      </Menu>
       
       <FAB
         style={[styles.fab, { backgroundColor: theme.colors.primary }]}
@@ -522,9 +530,6 @@ const NotesScreen: React.FC = () => {
     </View>
   );
 };
-
-// Needed for the folder chips
-import { ScrollView } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -539,7 +544,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
-  actionRow: {
+  filterRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
@@ -548,100 +553,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 8,
   },
-  folderChipsContent: {
-    paddingVertical: 4,
-  },
-  folderFilterChip: {
+  filterChip: {
     marginRight: 8,
   },
-  notesList: {
+  listContent: {
+    paddingBottom: 80,
+  },
+  sectionHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    width: '100%',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  divider: {
+    marginTop: 8,
+  },
+  cardContainer: {
+    width: `${100 / numColumns}%`,
     padding: 8,
   },
-  emptyList: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  card: {
+    borderWidth: 1,
+    elevation: 1,
   },
-  gridItem: {
-    flex: 1,
-    maxWidth: `${100 / Math.floor(Dimensions.get('window').width / 180)}%`,
-  },
-  listItem: {
-    marginBottom: 12,
-    marginHorizontal: 6,
-  },
-  noteCard: {
-    height: 200,
-    overflow: 'hidden',
-  },
-  noteListCard: {
-    overflow: 'hidden',
-  },
-  noteContent: {
-    flex: 1,
-    justifyContent: 'space-between',
-  },
-  noteListContent: {
-    minHeight: 100,
+  cardContent: {
+    padding: 8,
   },
   noteHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  noteListHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    marginBottom: 4,
   },
   noteTitle: {
-    flex: 1,
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  notePreview: {
-    fontSize: 14,
-    marginTop: 8,
-    marginBottom: 8,
+    fontWeight: '500',
     flex: 1,
-  },
-  noteFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  noteListFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  noteListActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  noteDate: {
-    fontSize: 12,
-    opacity: 0.7,
-  },
-  folderChip: {
-    height: 20,
-    paddingHorizontal: 4,
   },
   pinIcon: {
     margin: 0,
     padding: 0,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
+  noteContent: {
+    fontSize: 14,
+    marginBottom: 8,
   },
-  emptyMessage: {
-    fontSize: 18,
-    textAlign: 'center',
-    opacity: 0.7,
+  noteFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 'auto',
+  },
+  folderChip: {
+    height: 20,
+  },
+  folderChipText: {
+    fontSize: 10,
+    color: 'white',
+  },
+  dateText: {
+    fontSize: 12,
   },
   fab: {
     position: 'absolute',
