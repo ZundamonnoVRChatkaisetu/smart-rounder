@@ -1,155 +1,156 @@
 # Smart Rounder
 
-Smart Rounder は、日常の生産性向上のための統合型アプリケーションです。タスク管理、メモ、カレンダー、アラーム、YouTube、Web検索、天気予報など、複数の機能を1つのアプリでシームレスに提供します。
+Smart Rounder is an all-in-one productivity app built with Expo for Android and Windows platforms. It integrates task management, note-taking, calendar, alarms, YouTube viewing, web search, and weather forecasting in a single application.
 
-## 機能
+![Smart Rounder App](./assets/icon.png)
 
-### タスク管理
-- タスクの作成、編集、削除
-- カテゴリによる整理
-- 優先度設定
-- 締め切り日の設定
-- タスクの完了状態の追跡
+## Features
 
-### メモ機能
-- テキストメモの作成と編集
-- メモのピン留め
-- フォルダによる整理
-- 色分け機能
+### Task Management
+- Create, edit, and delete tasks
+- Set priorities and due dates
+- Organize tasks into categories
+- Filter and sort tasks
+- Get notifications for upcoming deadlines
 
-### カレンダー機能
-- 日付ベースのイベント管理
-- 月表示、週表示、日表示
-- イベントのリマインダー設定
-- デバイスカレンダーとの同期
+### Notes
+- Create and edit rich text notes
+- Organize notes into folders
+- Pin important notes
+- Archive older notes
+- Search functionality
 
-### アラーム機能
-- 定期的および一回限りのアラーム
-- カスタムサウンド選択
-- スヌーズ機能
-- 徐々に音量を上げる機能
+### Calendar
+- View events in month, week, or day view
+- Create and manage events
+- Set reminders
+- Sync with device calendar
+- Multiple calendar support
 
-### その他の機能
-- YouTube閲覧（アプリ内ブラウザ）
-- Web検索（Googleなど）
-- 天気予報の確認
-- ダークモード対応
-- 複数デバイス間のデータ同期
+### Alarms
+- Set one-time or recurring alarms
+- Customize alarm sounds
+- Snooze functionality
+- Smart alarms
 
-## 技術スタック
+### Additional Features
+- **YouTube**: Watch YouTube videos directly within the app
+- **Web Search**: Search the web without leaving the app
+- **Weather Forecast**: Check current weather and forecasts
 
-- **フレームワーク**: React Native, Expo
-- **状態管理**: Zustand
-- **UI コンポーネント**: React Native Paper
-- **ナビゲーション**: React Navigation
-- **データ永続化**: AsyncStorage, SQLite, SecureStore
-- **Web閲覧**: React Native WebView
-- **通知**: Expo Notifications
-- **カレンダー統合**: Expo Calendar
+### User Interface
+- Dark mode support
+- Customizable theme colors
+- Intuitive navigation
+- Responsive design for different screen sizes
 
-## 開始方法
+### Data Management
+- User account system
+- Data synchronization across devices
+- Backup and restore functionality
 
-### 前提条件
+## Installation
 
-- Node.js (v16以上)
-- npm または yarn
+### Prerequisites
+- Node.js 20.0.0 or later
+- Yarn or npm
 - Expo CLI
-- Android StudioまたはXcode（物理デバイスがない場合）
 
-### インストール
+### Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ZundamonnoVRChatkaisetu/smart-rounder.git
+   cd smart-rounder
+   ```
 
-1. リポジトリをクローンします
+2. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn install
+   ```
 
+3. Start the development server:
+   ```bash
+   npm start
+   # or
+   yarn start
+   ```
+
+4. Run on Android:
+   ```bash
+   npm run android
+   # or
+   yarn android
+   ```
+
+5. Run on web (for Windows):
+   ```bash
+   npm run web
+   # or
+   yarn web
+   ```
+
+## Building for Production
+
+### Android
 ```bash
-git clone https://github.com/ZundamonnoVRChatkaisetu/smart-rounder.git
-cd smart-rounder
+eas build -p android
 ```
 
-2. 依存関係をインストールします
-
+### Windows (Progressive Web App)
 ```bash
-npm install
-# または
-yarn install
+expo build:web
 ```
 
-3. アプリを起動します
-
-```bash
-npx expo start
-```
-
-4. 表示されるQRコードをExpo Go（モバイル）でスキャンするか、エミュレータで開きます
-
-## Windowsビルド
-
-WindowsビルドにはExpo for Windowsを使用します。
-
-```bash
-npm install -g expo-cli
-npm run web
-```
-
-## Androidビルド
-
-```bash
-npx expo build:android
-```
-
-## iOS ビルド
-
-```bash
-npx expo build:ios
-```
-
-## プロジェクト構造
+## Project Structure
 
 ```
 smart-rounder/
-├── assets/                  # アイコン、スプラッシュ画像など
+├── assets/                 # Images and other static assets
 ├── src/
-│   ├── components/          # 再利用可能なUIコンポーネント
-│   ├── contexts/            # React Contextプロバイダー
-│   │   ├── AuthContext.tsx  # 認証コンテキスト
-│   │   ├── ThemeContext.tsx # テーマコンテキスト
-│   │   └── NotificationContext.tsx # 通知コンテキスト
-│   ├── models/              # データモデル
-│   │   ├── Task.ts
-│   │   ├── Note.ts
-│   │   ├── Calendar.ts
-│   │   └── Alarm.ts
-│   ├── navigation/          # 画面ナビゲーション
-│   │   ├── RootNavigator.tsx
-│   │   ├── AuthNavigator.tsx
-│   │   ├── MainNavigator.tsx
-│   │   └── feature/        # 機能ごとのナビゲーター
-│   ├── screens/             # アプリ画面
-│   │   ├── auth/           # 認証関連画面
-│   │   ├── tasks/          # タスク管理画面
-│   │   ├── notes/          # メモ画面
-│   │   ├── calendar/       # カレンダー画面
-│   │   ├── alarm/          # アラーム画面
-│   │   ├── settings/       # 設定画面
-│   │   └── more/           # その他の追加機能画面
-│   ├── stores/              # Zustandストア
-│   │   ├── useTaskStore.ts
-│   │   ├── useNoteStore.ts
-│   │   ├── useCalendarStore.ts
-│   │   └── useAlarmStore.ts
-│   └── utils/              # ユーティリティ関数
-├── App.tsx                 # アプリのエントリーポイント
-├── app.json                # Expo設定
-└── package.json            # 依存関係とスクリプト
+│   ├── app/                # Main app components
+│   ├── components/         # Reusable UI components
+│   ├── contexts/           # React contexts for state management
+│   ├── models/             # TypeScript interfaces and types
+│   ├── navigation/         # Navigation configuration
+│   ├── screens/            # Screen components for each feature
+│   ├── stores/             # Zustand stores for state management
+│   ├── types/              # TypeScript type definitions
+│   └── utils/              # Utility functions
+├── App.tsx                 # Entry point
+├── app.json                # Expo configuration
+├── package.json            # Dependencies and scripts
+└── tsconfig.json           # TypeScript configuration
 ```
 
-## 将来の展望
+## Core Technologies
 
-- Apple Watchおよび他のウェアラブルデバイスとの連携
-- 音声コマンドのサポート
-- AIベースのタスク推奨
-- チーム協力機能
-- さらなるカスタマイズオプション
+- **Framework**: Expo & React Native
+- **Language**: TypeScript
+- **UI Components**: React Native Paper
+- **Navigation**: React Navigation
+- **State Management**: Zustand & React Context
+- **Storage**: SQLite & AsyncStorage
+- **API Integration**: WebView for external services
 
-## ライセンス
+## Contributing
 
-このプロジェクトはMITライセンスのもとで公開されています。
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgements
+
+- [Expo](https://docs.expo.dev/)
+- [React Native](https://reactnative.dev/)
+- [React Native Paper](https://callstack.github.io/react-native-paper/)
+- [React Navigation](https://reactnavigation.org/)
+- [Zustand](https://github.com/pmndrs/zustand)
+- [SQLite](https://www.sqlite.org/)
