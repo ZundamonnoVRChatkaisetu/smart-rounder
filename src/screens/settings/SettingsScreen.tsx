@@ -3,18 +3,19 @@ import {
   View,
   StyleSheet,
   ScrollView,
+  TouchableOpacity,
   Alert,
-  Platform,
-  Linking,
 } from 'react-native';
 import {
   List,
   Switch,
   Divider,
   Text,
+  Avatar,
+  Button,
   Dialog,
   Portal,
-  Button,
+  Paragraph,
   useTheme as usePaperTheme,
 } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -23,9 +24,7 @@ import { SettingsStackParamList } from '../../navigation/feature/SettingsNavigat
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNotifications } from '../../contexts/NotificationContext';
-import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Application from 'expo-application';
+import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 
 type SettingsScreenNavigationProp = StackNavigationProp<SettingsStackParamList, 'SettingsList'>;
 
@@ -37,22 +36,25 @@ const SettingsScreen: React.FC = () => {
   const { notificationsEnabled, enableNotifications, disableNotifications } = useNotifications();
   
   const [logoutDialogVisible, setLogoutDialogVisible] = useState(false);
-  const [clearDataDialogVisible, setClearDataDialogVisible] = useState(false);
+  const [deleteAccountDialogVisible, setDeleteAccountDialogVisible] = useState(false);
   
-  // Get application version
-  const appVersion = Application.nativeApplicationVersion || '1.0.0';
-  
-  // Handle theme toggle
-  const handleThemeToggle = () => {
-    toggleTheme();
-  };
-  
-  // Handle notifications toggle
-  const handleNotificationsToggle = async () => {
-    if (notificationsEnabled) {
-      await disableNotifications();
-    } else {
-      await enableNotifications();
+  // Handle notification toggle
+  const handleNotificationToggle = async () => {
+    try {
+      if (notificationsEnabled) {
+        await disableNotifications();
+      } else {
+        const enabled = await enableNotifications();
+        if (!enabled) {
+          Alert.alert(
+            'Notifications Permission',
+            'Please enable notifications in your device settings to receive alerts for tasks and events.'
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling notifications:', error);
+      Alert.alert('Error', 'Failed to update notification settings');
     }
   };
   
@@ -63,193 +65,114 @@ const SettingsScreen: React.FC = () => {
       setLogoutDialogVisible(false);
     } catch (error) {
       console.error('Error signing out:', error);
-      Alert.alert('Error', 'Failed to sign out. Please try again.');
+      Alert.alert('Error', 'Failed to sign out');
     }
   };
   
-  // Handle clear data
-  const handleClearData = async () => {
-    try {
-      // Clear all app data except auth (user will need to log out separately)
-      await AsyncStorage.clear();
-      
-      // Reset stores (would need to implement in actual app)
-      // resetTaskStore();
-      // resetNoteStore();
-      // resetCalendarStore();
-      // resetAlarmStore();
-      
-      Alert.alert(
-        'Data Cleared',
-        'All app data has been cleared successfully. The app will now restart.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              // In a real app, we would restart the app here
-              // For now, just navigate back to the root
-              navigation.navigate('SettingsList');
-            },
-          },
-        ]
-      );
-      
-      setClearDataDialogVisible(false);
-    } catch (error) {
-      console.error('Error clearing data:', error);
-      Alert.alert('Error', 'Failed to clear data. Please try again.');
-    }
-  };
-  
-  // Open privacy policy
-  const openPrivacyPolicy = () => {
-    Linking.openURL('https://www.example.com/privacy-policy');
-  };
-  
-  // Open terms of service
-  const openTermsOfService = () => {
-    Linking.openURL('https://www.example.com/terms-of-service');
-  };
-  
-  // Open app store for rating
-  const rateApp = () => {
-    const url = Platform.select({
-      ios: 'https://apps.apple.com/app/idXXXXXXXXXX?action=write-review',
-      android: 'https://play.google.com/store/apps/details?id=com.smartrounder.app&showAllReviews=true',
-      default: 'https://www.example.com',
-    });
-    
-    Linking.openURL(url);
-  };
-  
-  // Send feedback email
-  const sendFeedback = () => {
-    Linking.openURL('mailto:support@example.com?subject=Smart%20Rounder%20Feedback');
+  // Handle account deletion
+  const handleDeleteAccount = async () => {
+    // This would actually delete the user account
+    // For now, just show a message and close the dialog
+    Alert.alert('Not Implemented', 'Account deletion is not implemented in this demo');
+    setDeleteAccountDialogVisible(false);
   };
   
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Account Section */}
-      <List.Section>
-        <List.Subheader style={{ color: theme.colors.primary }}>Account</List.Subheader>
-        
-        <List.Item
-          title={user?.username || 'User'}
-          description={user?.email || 'Not signed in'}
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="account-circle" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={() => navigation.navigate('AccountSettings')}
-        />
-        
-        <List.Item
-          title="Sign Out"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="logout" size={size} color={theme.colors.error || '#F44336'} />
-              )}
-            />
-          )}
-          onPress={() => setLogoutDialogVisible(true)}
-        />
-      </List.Section>
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      contentContainerStyle={styles.contentContainer}
+    >
+      {user && (
+        <View style={styles.profileSection}>
+          <Avatar.Text
+            size={80}
+            label={user.username.substring(0, 2).toUpperCase()}
+            style={[styles.avatar, { backgroundColor: theme.colors.primary }]}
+          />
+          <View style={styles.profileInfo}>
+            <Text style={[styles.username, { color: theme.colors.text }]}>
+              {user.username}
+            </Text>
+            <Text style={[styles.email, { color: theme.colors.text + 'CC' }]}>
+              {user.email}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => navigation.navigate('AccountSettings')}
+          >
+            <Text style={[styles.editButtonText, { color: theme.colors.primary }]}>
+              Edit
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
       
-      <Divider />
+      <Divider style={styles.divider} />
       
-      {/* Appearance Section */}
-      <List.Section>
-        <List.Subheader style={{ color: theme.colors.primary }}>Appearance</List.Subheader>
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>
+          App Settings
+        </Text>
         
         <List.Item
           title="Dark Mode"
+          description="Toggle between light and dark themes"
           left={props => (
             <List.Icon
               {...props}
-              icon={({ size, color }) => (
-                <MaterialCommunityIcons
-                  name={isDarkMode ? "weather-night" : "weather-sunny"}
-                  size={size}
-                  color={theme.colors.primary}
-                />
-              )}
+              icon={isDarkMode ? 'weather-night' : 'white-balance-sunny'}
+              color={theme.colors.primary}
             />
           )}
           right={props => (
             <Switch
               value={isDarkMode}
-              onValueChange={handleThemeToggle}
+              onValueChange={toggleTheme}
               color={theme.colors.primary}
             />
           )}
         />
         
         <List.Item
-          title="Appearance Settings"
-          description="Customize theme colors and fonts"
+          title="Notifications"
+          description="Enable notifications for tasks and events"
           left={props => (
             <List.Icon
               {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="color-lens" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={() => navigation.navigate('AppearanceSettings')}
-        />
-      </List.Section>
-      
-      <Divider />
-      
-      {/* Notifications Section */}
-      <List.Section>
-        <List.Subheader style={{ color: theme.colors.primary }}>Notifications</List.Subheader>
-        
-        <List.Item
-          title="Enable Notifications"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="notifications" size={size} color={theme.colors.primary} />
-              )}
+              icon="bell-outline"
+              color={theme.colors.primary}
             />
           )}
           right={props => (
             <Switch
               value={notificationsEnabled}
-              onValueChange={handleNotificationsToggle}
+              onValueChange={handleNotificationToggle}
               color={theme.colors.primary}
-            />
-          )}
-        />
-        
-        <List.Item
-          title="Notification Settings"
-          description="Configure notification preferences"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="notifications-active" size={size} color={theme.colors.primary} />
-              )}
             />
           )}
           onPress={() => navigation.navigate('NotificationSettings')}
         />
-      </List.Section>
-      
-      <Divider />
-      
-      {/* Data & Sync Section */}
-      <List.Section>
-        <List.Subheader style={{ color: theme.colors.primary }}>Data & Sync</List.Subheader>
+        
+        <List.Item
+          title="Appearance"
+          description="Customize app appearance and themes"
+          left={props => (
+            <List.Icon
+              {...props}
+              icon="palette-outline"
+              color={theme.colors.primary}
+            />
+          )}
+          right={props => (
+            <List.Icon
+              {...props}
+              icon="chevron-right"
+              color={theme.colors.text + '80'}
+            />
+          )}
+          onPress={() => navigation.navigate('AppearanceSettings')}
+        />
         
         <List.Item
           title="Sync Settings"
@@ -257,139 +180,145 @@ const SettingsScreen: React.FC = () => {
           left={props => (
             <List.Icon
               {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="sync" size={size} color={theme.colors.primary} />
-              )}
+              icon="sync"
+              color={theme.colors.primary}
+            />
+          )}
+          right={props => (
+            <List.Icon
+              {...props}
+              icon="chevron-right"
+              color={theme.colors.text + '80'}
             />
           )}
           onPress={() => navigation.navigate('SyncSettings')}
         />
+      </View>
+      
+      <Divider style={styles.divider} />
+      
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>
+          Account
+        </Text>
         
         <List.Item
-          title="Clear App Data"
-          description="Reset all app data"
+          title="Account Settings"
+          description="Manage your account details"
           left={props => (
             <List.Icon
               {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="delete-forever" size={size} color={theme.colors.error || '#F44336'} />
-              )}
+              icon="account-cog-outline"
+              color={theme.colors.primary}
             />
           )}
-          onPress={() => setClearDataDialogVisible(true)}
+          right={props => (
+            <List.Icon
+              {...props}
+              icon="chevron-right"
+              color={theme.colors.text + '80'}
+            />
+          )}
+          onPress={() => navigation.navigate('AccountSettings')}
         />
-      </List.Section>
+        
+        <List.Item
+          title="Sign Out"
+          description="Sign out of your account"
+          left={props => (
+            <List.Icon
+              {...props}
+              icon="logout"
+              color={theme.colors.primary}
+            />
+          )}
+          onPress={() => setLogoutDialogVisible(true)}
+        />
+        
+        <List.Item
+          title="Delete Account"
+          description="Permanently delete your account and data"
+          left={props => (
+            <List.Icon
+              {...props}
+              icon="delete-outline"
+              color="red"
+            />
+          )}
+          onPress={() => setDeleteAccountDialogVisible(true)}
+        />
+      </View>
       
-      <Divider />
+      <Divider style={styles.divider} />
       
-      {/* About & Support Section */}
-      <List.Section>
-        <List.Subheader style={{ color: theme.colors.primary }}>About & Support</List.Subheader>
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>
+          About
+        </Text>
         
         <List.Item
           title="About Smart Rounder"
-          description={`Version ${appVersion}`}
+          description="Learn more about the app"
           left={props => (
             <List.Icon
               {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="info" size={size} color={theme.colors.primary} />
-              )}
+              icon="information-outline"
+              color={theme.colors.primary}
+            />
+          )}
+          right={props => (
+            <List.Icon
+              {...props}
+              icon="chevron-right"
+              color={theme.colors.text + '80'}
             />
           )}
           onPress={() => navigation.navigate('About')}
         />
         
-        <List.Item
-          title="Rate App"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="star" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={rateApp}
-        />
-        
-        <List.Item
-          title="Send Feedback"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="feedback" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={sendFeedback}
-        />
-        
-        <List.Item
-          title="Privacy Policy"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="privacy-tip" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={openPrivacyPolicy}
-        />
-        
-        <List.Item
-          title="Terms of Service"
-          left={props => (
-            <List.Icon
-              {...props}
-              icon={({ size, color }) => (
-                <MaterialIcons name="description" size={size} color={theme.colors.primary} />
-              )}
-            />
-          )}
-          onPress={openTermsOfService}
-        />
-      </List.Section>
+        <View style={styles.versionContainer}>
+          <Text style={[styles.versionText, { color: theme.colors.text + '99' }]}>
+            Version 1.0.0
+          </Text>
+        </View>
+      </View>
       
-      {/* Dialogs */}
       <Portal>
         <Dialog
           visible={logoutDialogVisible}
           onDismiss={() => setLogoutDialogVisible(false)}
           style={{ backgroundColor: theme.colors.card }}
         >
-          <Dialog.Title style={{ color: theme.colors.text }}>Sign Out</Dialog.Title>
+          <Dialog.Title style={{ color: theme.colors.text }}>
+            Sign Out
+          </Dialog.Title>
           <Dialog.Content>
-            <Text style={{ color: theme.colors.text }}>
-              Are you sure you want to sign out? Your data will remain synced to your account.
-            </Text>
+            <Paragraph style={{ color: theme.colors.text }}>
+              Are you sure you want to sign out?
+            </Paragraph>
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setLogoutDialogVisible(false)}>Cancel</Button>
-            <Button onPress={handleLogout} color={theme.colors.error || '#F44336'}>
-              Sign Out
-            </Button>
+            <Button onPress={handleLogout}>Sign Out</Button>
           </Dialog.Actions>
         </Dialog>
         
         <Dialog
-          visible={clearDataDialogVisible}
-          onDismiss={() => setClearDataDialogVisible(false)}
+          visible={deleteAccountDialogVisible}
+          onDismiss={() => setDeleteAccountDialogVisible(false)}
           style={{ backgroundColor: theme.colors.card }}
         >
-          <Dialog.Title style={{ color: theme.colors.text }}>Clear App Data</Dialog.Title>
+          <Dialog.Title style={{ color: theme.colors.text }}>
+            Delete Account
+          </Dialog.Title>
           <Dialog.Content>
-            <Text style={{ color: theme.colors.text }}>
-              Are you sure you want to clear all app data? This action cannot be undone.
-            </Text>
+            <Paragraph style={{ color: theme.colors.text }}>
+              Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.
+            </Paragraph>
           </Dialog.Content>
           <Dialog.Actions>
-            <Button onPress={() => setClearDataDialogVisible(false)}>Cancel</Button>
-            <Button onPress={handleClearData} color={theme.colors.error || '#F44336'}>
-              Clear Data
-            </Button>
+            <Button onPress={() => setDeleteAccountDialogVisible(false)}>Cancel</Button>
+            <Button onPress={handleDeleteAccount} color="red">Delete</Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>
@@ -400,6 +329,57 @@ const SettingsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  contentContainer: {
+    paddingBottom: 24,
+  },
+  profileSection: {
+    flexDirection: 'row',
+    padding: 16,
+    alignItems: 'center',
+  },
+  avatar: {
+    marginRight: 16,
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  username: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  email: {
+    fontSize: 14,
+  },
+  editButton: {
+    padding: 8,
+  },
+  editButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  divider: {
+    marginVertical: 8,
+  },
+  section: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    marginLeft: 8,
+  },
+  versionContainer: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  versionText: {
+    fontSize: 14,
   },
 });
 
